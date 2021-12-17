@@ -1,5 +1,5 @@
 %% ==========================================================================================================
-%% Ram - An ephemeral distributed KV store for Erlang and Elixir.
+%% Ram - An in-memory distributed KV store for Erlang and Elixir.
 %%
 %% The MIT License (MIT)
 %%
@@ -33,6 +33,7 @@
 -export([start_process/0, start_process/1, start_process/2]).
 -export([kill_process/1]).
 -export([wait_cluster_mesh_connected/1]).
+-export([wait_process_name_ready/1]).
 -export([assert_cluster/2]).
 -export([assert_received_messages/1]).
 -export([assert_empty_queue/0]).
@@ -95,10 +96,13 @@ start_slave(NodeShortName) ->
     %% start slave
     {ok, Node} = ct_slave:start(NodeShortName, [
         {boot_timeout, 10},
-        {erl_flags, "-connect_all false -kernel dist_auto_connect never"}
+        {erl_flags, "-kernel dist_auto_connect never"}
+%%        {erl_flags, "-connect_all false -kernel dist_auto_connect never"}
     ]),
-    %% add code path
-    CodePath = code:get_path(),
+    %% add code path to slaves
+    CodePath = CodePath = lists:filter(fun(Path) ->
+        nomatch =:= string:find(Path, "rebar3")
+    end, code:get_path()),
     true = rpc:call(Node, code, set_path, [CodePath]),
     %% return
     {ok, Node}.
@@ -179,6 +183,37 @@ wait_cluster_mesh_connected(Nodes, StartAt) ->
                 false ->
                     timer:sleep(50),
                     wait_cluster_mesh_connected(Nodes, StartAt)
+            end
+    end.
+
+wait_process_name_ready(Name) ->
+    wait_process_name_ready(Name, os:system_time(millisecond)).
+wait_process_name_ready(Name, StartAt) ->
+    timer:sleep(50),
+    case whereis(Name) of
+        undefined ->
+            case os:system_time(millisecond) - StartAt > ?DEFAULT_WAIT_TIMEOUT of
+                true ->
+                    ct:fail("~n\tProcess with name ~p didn't come alive~n", [Name]);
+
+                false ->
+
+                    wait_process_name_ready(Name, StartAt)
+            end;
+
+        Pid ->
+            case process_info(Pid, status) of
+                {status, waiting} ->
+                    ok;
+
+                Other ->
+                    case os:system_time(millisecond) - StartAt > ?DEFAULT_WAIT_TIMEOUT of
+                        true ->
+                            ct:fail("~n\tProcess with name ~p didn't come ready~n\tStatus: ~p~n", [Name, Other]);
+
+                        false ->
+                            wait_process_name_ready(Name, StartAt)
+                    end
             end
     end.
 

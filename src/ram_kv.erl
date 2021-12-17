@@ -26,9 +26,8 @@
 -module(ram_kv).
 
 %% API
--export([get/2, fetch/1]).
--export([put/2]).
--export([update/3]).
+-export([get/1]).
+-export([put/3]).
 -export([delete/1]).
 
 %% includes
@@ -37,48 +36,61 @@
 %% ===================================================================
 %% API
 %% ===================================================================
--spec get(Key :: term(), Default :: term()) -> Value :: term().
-get(Key, Default) ->
-    case fetch(Key) of
-        error -> Default;
-        {ok, Value} -> Value
-    end.
-
--spec fetch(Key :: term()) -> {ok, Value :: term()} | error.
-fetch(Key) ->
+-spec get(Key :: term()) -> {ok, Value :: term(), Version :: term()}.
+get(Key) ->
     F = fun() ->
-        case mnesia:read({ram_table, Key}) of
-            [] -> error;
-            [#ram_table{value = Value}] -> {ok, Value}
+        case mnesia:read({?TABLE, Key}) of
+            [] -> {error, undefined};
+            [#?TABLE{value = Value, version = Version}] -> {ok, Value, Version}
         end
     end,
     mnesia:activity(transaction, F).
 
--spec put(Key :: term(), Value :: term()) -> ok | {error, Reason :: term()}.
-put(Key, Value) ->
+-spec put(Key :: term(), Value :: term(), Version :: term()) -> {ok, Value :: term(), Version :: term()}.
+put(Key, Value, Version) ->
     F = fun() ->
-        mnesia:write(#ram_table{
-            key = Key,
-            value = Value
-        })
-    end,
-    mnesia:activity(transaction, F).
+        VersionMatch = case mnesia:read({?TABLE, Key}) of
+            [] ->
+                case Version of
+                    undefined -> ok;
+                    _ -> {error, deleted}
+                end;
 
--spec update(Key :: term(), Default :: term(), function()) -> ok.
-update(Key, Default, Fun) ->
-    F = fun() ->
-        NewValue = case mnesia:read({ram_table, Key}) of
-            [] -> Default;
-            [#ram_table{value = Value}] -> Fun(Value)
+            [#?TABLE{version = Version}] ->
+                ok;
+
+            _ ->
+                {error, outdated}
         end,
-        mnesia:write(#ram_table{
-            key = Key,
-            value = NewValue
-        })
+        case VersionMatch of
+            ok ->
+                Version1 = generate_id(),
+                mnesia:write(#?TABLE{
+                    key = Key,
+                    value = Value,
+                    version = Version1
+                }),
+                {ok, Version1};
+
+            {error, Reason} ->
+                {error, Reason}
+        end
     end,
     mnesia:activity(transaction, F).
 
 -spec delete(Key :: term()) -> ok.
 delete(Key) ->
-    F = fun() -> mnesia:delete({ram_table, Key}) end,
+    F = fun() ->
+        case mnesia:read({?TABLE, Key}) of
+            [] -> {error, undefined};
+            _ -> mnesia:delete({?TABLE, Key})
+        end
+    end,
     mnesia:activity(transaction, F).
+
+%% ===================================================================
+%% Internal
+%% =================================================
+-spec generate_id() -> binary().
+generate_id() ->
+    binary:encode_hex(crypto:hash(sha256, erlang:term_to_binary({node(), erlang:system_time()}))).

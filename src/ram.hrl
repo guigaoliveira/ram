@@ -1,5 +1,5 @@
 %% ==========================================================================================================
-%% Ram - An ephemeral distributed KV store for Erlang and Elixir.
+%% Ram - An in-memory distributed KV store for Erlang and Elixir.
 %%
 %% The MIT License (MIT)
 %%
@@ -23,7 +23,16 @@
 %% OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 %% THE SOFTWARE.
 %% ==========================================================================================================
--record(ram_table, {
+-define(TABLE, ram_data_table).
+
+-record(?TABLE, {
     key = undefined :: term(),
-    value = undefined :: term()
+    value = undefined :: term(),
+    version = undefined :: term()
 }).
+
+-type ram_entry() :: {
+    Key :: term(),
+    Value :: term(),
+    Version :: term()
+}.

@@ -34,9 +34,7 @@
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
 
 %% records
--record(state, {
-
-}).
+-record(state, {}).
 
 %% includes
 -include("ram.hrl").
@@ -132,10 +130,10 @@ init_mnesia_tables() ->
     ClusterNodes = [node() | nodes()],
     {ok, _} = mnesia:change_config(extra_db_nodes, ClusterNodes),
     %% create tables
-    create_table(ram_table, [
+    create_table(?TABLE, [
         {type, set},
         {ram_copies, ClusterNodes},
-        {attributes, record_info(fields, ram_table)},
+        {attributes, record_info(fields, ?TABLE)},
         {storage_properties, [{ets, [{read_concurrency, true}, {write_concurrency, true}] ++ ?ETS_OPTIMIZATIONS}]}
     ]).
 
