@@ -31,7 +31,17 @@
 -export([start_link/0]).
 
 %% gen_server callbacks
--export([init/1, handle_call/3, handle_cast/2, handle_info/2, terminate/2, code_change/3]).
+-export([
+    init/1,
+    handle_call/3,
+    handle_cast/2,
+    handle_info/2,
+    terminate/2,
+    code_change/3
+]).
+
+%% internals
+-export([add_table_copy/1]).
 
 %% records
 -record(state, {}).
@@ -39,7 +49,7 @@
 %% includes
 -include("ram.hrl").
 
--if (?OTP_RELEASE >= 23).
+- if (?OTP_RELEASE >= 23).
 -define(ETS_OPTIMIZATIONS, [{decentralized_counters, true}]).
 -else.
 -define(ETS_OPTIMIZATIONS, []).
@@ -126,53 +136,84 @@ code_change(_OldVsn, State, _Extra) ->
 %% ===================================================================
 %% Internal
 %% ===================================================================
+-spec init_mnesia_tables() -> any().
 init_mnesia_tables() ->
-    ClusterNodes = [node() | nodes()],
-    {ok, _} = mnesia:change_config(extra_db_nodes, ClusterNodes),
-    %% create tables
-    create_table(?TABLE, [
+    Self = self(),
+    case global:trans({{?MODULE, init_mnesia_tables}, Self},
+        fun() ->
+            case global:whereis_name(ram_init_mnesia_tables) of
+                undefined ->
+                    %% first node
+                    case create_table() of
+                        ok -> global:register_name(ram_init_mnesia_tables, Self);
+                        {error, Reason} -> {error, Reason}
+                    end;
+
+                TableCreatorPid ->
+                    %% later nodes
+                    rpc:call(node(TableCreatorPid), ?MODULE, add_table_copy, [node()])
+            end
+        end) of
+        ok -> wait_table_ready();
+        _ -> ok
+    end.
+
+-spec create_table() -> ok | {error, Reason :: term()}.
+create_table() ->
+    case mnesia:create_table(?TABLE, [
         {type, set},
-        {ram_copies, ClusterNodes},
+        {ram_copies, [node() | nodes()]},
         {attributes, record_info(fields, ?TABLE)},
         {storage_properties, [{ets, [{read_concurrency, true}, {write_concurrency, true}] ++ ?ETS_OPTIMIZATIONS}]}
-    ]).
-
--spec create_table(TableName :: atom(), Options :: [tuple()]) -> ok | {error, any()}.
-create_table(TableName, Options) ->
-    CurrentNode = node(),
-    %% ensure table exists
-    case mnesia:create_table(TableName, Options) of
+    ]) of
         {atomic, ok} ->
-            error_logger:info_msg("~p was successfully created~n", [TableName]),
+            error_logger:info_msg("RAM[~s] Table was successfully created", [node()]),
             ok;
-        {aborted, {already_exists, TableName}} ->
-            %% table already exists, try to add current node as copy
-            add_table_copy_to_current_node(TableName);
-        {aborted, {already_exists, TableName, CurrentNode}} ->
-            %% table already exists, try to add current node as copy
-            add_table_copy_to_current_node(TableName);
+
+        {aborted, {already_exists, ?TABLE}} ->
+            error_logger:info_msg("RAM[~s] Table already exists", [node()]),
+            ok;
+
+        {aborted, {already_exists, ?TABLE, _Node}} ->
+            error_logger:info_msg("RAM[~s] Table already exists", [node()]),
+            ok;
+
         Other ->
-            error_logger:error_msg("Error while creating ~p: ~p~n", [TableName, Other]),
+            error_logger:error_msg("RAM[~s] Error while creating table: ~p", [node(), Other]),
             {error, Other}
     end.
 
--spec add_table_copy_to_current_node(TableName :: atom()) -> ok | {error, any()}.
-add_table_copy_to_current_node(TableName) ->
-    CurrentNode = node(),
-    %% wait for table
-    mnesia:wait_for_tables([TableName], 10000),
-    %% add copy
-    case mnesia:add_table_copy(TableName, CurrentNode, ram_copies) of
-        {atomic, ok} ->
-            error_logger:info_msg("Copy of ~p was successfully added to current node~n", [TableName]),
-            ok;
-        {aborted, {already_exists, TableName}} ->
-            error_logger:info_msg("Copy of ~p is already added to current node~n", [TableName]),
-            ok;
-        {aborted, {already_exists, TableName, CurrentNode}} ->
-            error_logger:info_msg("Copy of ~p is already added to current node~n", [TableName]),
-            ok;
-        {aborted, Reason} ->
-            error_logger:error_msg("Error while creating copy of ~p: ~p~n", [TableName, Reason]),
+-spec add_table_copy(RemoteNode :: node()) -> ok | {error, Reason :: term()}.
+add_table_copy(RemoteNode) ->
+    case mnesia:change_config(extra_db_nodes, [RemoteNode]) of
+        {ok, _} ->
+            error_logger:info_msg("RAM[~s] Extra node ~s successfully added", [node(), RemoteNode]),
+            case mnesia:add_table_copy(?TABLE, RemoteNode, ram_copies) of
+                {atomic, ok} ->
+                    error_logger:info_msg("RAM[~s] Table copy was successfully added on node ~s", [node(), RemoteNode]),
+                    ok;
+
+                {aborted, {already_exists, ?TABLE}} ->
+                    error_logger:info_msg("RAM[~s] Table copy already added on node ~s", [node(), RemoteNode]),
+                    ok;
+
+                {aborted, {already_exists, ?TABLE, _Node}} ->
+                    error_logger:info_msg("RAM[~s] Table copy already added on node ~s", [node(), RemoteNode]),
+                    ok;
+
+                {aborted, Reason} ->
+                    error_logger:info_msg("RAM[~s] Error while adding table copy on node ~s: ~p", [node(), RemoteNode, Reason]),
+                    {error, Reason}
+            end;
+
+        {error, Reason} ->
+            error_logger:info_msg("RAM[~s] Error while adding extra node ~s: ~p", [node(), RemoteNode, Reason]),
             {error, Reason}
+    end.
+
+-spec wait_table_ready() -> ok | {error, Reason :: term()}.
+wait_table_ready() ->
+    case mnesia:wait_for_tables([?TABLE], 10000) of
+        {timeout, [?TABLE]} -> {error, timeout};
+        Other -> Other
     end.
