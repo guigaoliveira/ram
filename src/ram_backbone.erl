@@ -76,6 +76,8 @@ start_link() ->
     ignore |
     {stop, Reason :: term()}.
 init([]) ->
+%%    %% monitor mnesia events
+%%    mnesia:subscribe(system),
     %% init db with current node set
     init_mnesia_tables(),
     %% init
@@ -113,6 +115,24 @@ handle_cast(Msg, State) ->
     {noreply, #state{}} |
     {noreply, #state{}, Timeout :: non_neg_integer()} |
     {stop, Reason :: term(), #state{}}.
+handle_info({mnesia_system_event, {inconsistent_database, Context, RemoteNode}}, State) ->
+    error_logger:error_msg("RAM[~s] MNESIA inconsistent database for remote node ~p with context: ~p",
+        [node(), RemoteNode, Context]
+    ),
+    {noreply, State};
+
+handle_info({mnesia_system_event, {mnesia_up, RemoteNode}}, State) when RemoteNode =/= node() ->
+    error_logger:error_msg("RAM[~s] MNESIA is UP on node ~p", [node(), RemoteNode]),
+    {noreply, State};
+
+handle_info({mnesia_system_event, {mnesia_down, RemoteNode}}, State) when RemoteNode =/= node() ->
+    error_logger:error_msg("RAM[~s] MNESIA is DOWN on node ~p", [node(), RemoteNode]),
+    {noreply, State};
+
+handle_info({mnesia_system_event, _MnesiaEvent}, State) ->
+    %% ignore mnesia event
+    {noreply, State};
+
 handle_info(Info, State) ->
     error_logger:warning_msg("RAM[~s] Received an unknown info message: ~p", [node(), Info]),
     {noreply, State}.
