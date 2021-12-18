@@ -33,6 +33,9 @@
 %% supervisor callbacks
 -export([init/1]).
 
+%% includes
+-include("ram.hrl").
+
 %% ===================================================================
 %% API
 %% ===================================================================
@@ -48,21 +51,22 @@ start_link() ->
 init([]) ->
     %% build children
     Children = [
-        child_spec(ram_backbone)
+        #{
+            id => pg_ram_scope,
+            start => {pg, start_link, [?SCOPE]},
+            type => supervisor,
+            shutdown => 10000,
+            restart => permanent,
+            modules => [pg]
+        },
+        #{
+            id => ram_backbone,
+            start => {ram_backbone, start_link, []},
+            type => worker,
+            shutdown => 10000,
+            restart => permanent,
+            modules => [ram_backbone]
+        }
     ],
     %% return
     {ok, {{one_for_one, 10, 10}, Children}}.
-
-%% ===================================================================
-%% Internals
-%% ===================================================================
--spec child_spec(Module :: module()) -> supervisor:child_spec().
-child_spec(Module) ->
-    #{
-        id => Module,
-        start => {Module, start_link, []},
-        type => worker,
-        shutdown => 10000,
-        restart => permanent,
-        modules => [Module]
-    }.

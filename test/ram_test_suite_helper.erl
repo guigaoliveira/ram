@@ -96,8 +96,7 @@ start_slave(NodeShortName) ->
     %% start slave
     {ok, Node} = ct_slave:start(NodeShortName, [
         {boot_timeout, 10},
-        {erl_flags, "-kernel dist_auto_connect never"}
-%%        {erl_flags, "-connect_all false -kernel dist_auto_connect never"}
+        {erl_flags, "-connect_all false -kernel dist_auto_connect never"}
     ]),
     %% add code path to slaves
     CodePath = CodePath = lists:filter(fun(Path) ->

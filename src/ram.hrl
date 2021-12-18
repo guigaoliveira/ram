@@ -24,6 +24,7 @@
 %% THE SOFTWARE.
 %% ==========================================================================================================
 -define(TABLE, ram_data_table).
+-define(SCOPE, ram).
 
 -record(?TABLE, {
     key = undefined :: term(),

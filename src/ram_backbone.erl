@@ -141,17 +141,29 @@ init_mnesia_tables() ->
     Self = self(),
     case global:trans({{?MODULE, init_mnesia_tables}, Self},
         fun() ->
-            case global:whereis_name(ram_init_mnesia_tables) of
-                undefined ->
+            case pg:get_members(?SCOPE, ram_nodes_with_init_table) of
+                [] ->
                     %% first node
                     case create_table() of
-                        ok -> global:register_name(ram_init_mnesia_tables, Self);
-                        {error, Reason} -> {error, Reason}
+                        ok ->
+                            ok = pg:join(?SCOPE, ram_nodes_with_init_table, Self),
+                            %% TODO: find a better way to ensure that pg is propagated
+                            timer:sleep(5000),
+                            ok;
+
+                        {error, Reason} ->
+                            {error, Reason}
                     end;
 
-                TableCreatorPid ->
+                [Pid | _] ->
                     %% later nodes
-                    rpc:call(node(TableCreatorPid), ?MODULE, add_table_copy, [node()])
+                    case rpc:call(node(Pid), ?MODULE, add_table_copy, [node()]) of
+                        ok ->
+                            ok = pg:join(?SCOPE, ram_nodes_with_init_table, Self);
+
+                        Error ->
+                            Error
+                    end
             end
         end) of
         ok -> wait_table_ready();
